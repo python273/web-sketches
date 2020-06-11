@@ -379,7 +379,7 @@ function render(
     }
 }
 
-var prev = null;
+let prev = null;
 
 let currentBlockIndex = 0;
 let nextBlockIndex = 0;
