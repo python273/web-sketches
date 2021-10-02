@@ -5,3 +5,5 @@
 [Particles Trail](https://python273.github.io/web-sketches/particles-trail/)
 
 [Particles Planet](https://python273.github.io/web-sketches/particles-planet/)
+
+[Particles Cube](https://python273.github.io/web-sketches/particles-cube/)
