@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Scratch the surface</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+html, body, canvas {
+    display: block;
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+}
+html { background: linear-gradient(135deg, #0094ff 0%, #ff00bf 100%); }
+</style>
+</head>
+<body>
+<canvas id="c" style="background-color: rgb(0, 0, 0);"></canvas>
+<script src="twgl.min.js"></script>
+<script id="vs" type="text/plain">
+attribute vec4 position;
+uniform vec2 canvasAspect;
+attribute mat4 instanceWorld;
+varying vec4 v_pos;
+
+void main() {
+    vec4 p = position - vec4(.5, .5, 0., 0.);
+    p.xy /= canvasAspect;
+    gl_Position = instanceWorld * p;
+    v_pos = position / 0.05;
+    //v_pos = vec4(position.x / instanceWorld[0][0], position.y / instanceWorld[1][1], 0., 1.);
+}
+</script>
+<script id="fs" type="text/plain">
+precision mediump float;
+
+varying vec4 v_pos;
+
+float rand(vec2 n) { return fract(sin(dot(n, vec2(12.9898, 4.1414))) * 43758.5453); }
+
+void main() {
+    vec2 uv = v_pos.xy;
+    //gl_FragColor = vec4(0., 0., 0., 1.-step(1.0, length(uv))); return;
+    float a = fract(rand(floor(uv.xy / 0.1 + rand(uv))));
+    a *= pow(length(uv)*3.1, 1.5);
+    gl_FragColor = vec4(0., 0., 0., 1.-a);
+}
+</script>
+<script>
+const canvas = document.getElementById("c");
+const gl = twgl.getContext(canvas, {
+    preserveDrawingBuffer: true,
+    premultipliedAlpha: false,
+});
+twgl.resizeCanvasToDisplaySize(gl.canvas, window.devicePixelRatio);
+gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+gl.clearColor(0., 0., 0., 1.);
+gl.clear(gl.COLOR_BUFFER_BIT);
+canvas.style.backgroundColor = '';  // prevents blinking before canvas is cleared
+gl.colorMask(false, false, false, true);  // only write alpha
+gl.enable(gl.BLEND);  // enable blending of alpha
+gl.blendEquation(gl.FUNC_REVERSE_SUBTRACT);
+gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+twgl.addExtensionsToContext(gl);
+const programInfo = twgl.createProgramInfo(gl, ["vs", "fs"]);
+
+function createSquare(s=0.05) {
+    return new Float32Array([-s, -s, 0, s, -s, 0, -s, s, 0, -s, s, 0, s, -s, 0, s, s, 0]);
+}
+
+let path = null;  // [{t, x, y, p}, ...]  // time, x, y, pressure
+async function loadPath() {
+    const response = await fetch('path.json');
+    const json = await response.json();
+    // normalize time
+    const t0 = json[0].t;
+    const t1 = json[json.length - 1].t;
+    console.log('path total time', t1 - t0);
+    for (const point of json) {
+        point.t = (point.t - t0) / (t1 - t0);
+    }
+    // normalize coords
+    let [minX, maxX, minY, maxY] = [Infinity, -Infinity, Infinity, -Infinity];
+    for (const point of json) {
+        minX = Math.min(minX, point.x);
+        maxX = Math.max(maxX, point.x);
+        minY = Math.min(minY, point.y);
+        maxY = Math.max(maxY, point.y);
+    }
+    const w = maxX - minX;
+    const h = maxY - minY;
+    for (const point of json) {
+        point.x = (point.x - minX) / w;
+        point.y = (point.y - minY) / h;
+    }
+    // invert y
+    for (const point of json) {
+        point.y = 1. - point.y;
+    }
+    path = json;
+}
+const pathLoaded = loadPath().then(() => {});
+function samplePath(time) {
+    if (time < 0. || time > 1.) { throw new Error('time out of range'); }
+    let i0 = 0;
+    for (let i = 0; i < path.length; ++i) {
+        if (path[i].t <= time) {
+            i0 = i;
+        }
+    }
+    const a = path[i0];
+    const b = path[Math.min(path.length - 1, i0 + 1)];
+    const t = (time - a.t) / (b.t - a.t);
+    const x = a.x * (1 - t) + b.x * t;
+    const y = a.y * (1 - t) + b.y * t;
+    const p = a.p * (1 - t) + b.p * t;
+    return [x, y, p];
+}
+
+const numInstances = 32;
+function createInstances() {
+    const instanceWorlds = new Float32Array(numInstances * 4*4);
+    for (let i = 0; i < numInstances; ++i) {
+        // identity matrix
+        instanceWorlds[i * 16 + 0] = 1;
+        instanceWorlds[i * 16 + 5] = 1;
+        instanceWorlds[i * 16 + 10] = 1;
+        instanceWorlds[i * 16 + 15] = 1;
+    }
+    return instanceWorlds;
+}
+function updateInstances(instanceWorlds, startTime, delta) {
+    for (let i = 0; i < numInstances; ++i) {
+        let [x, y, p] = samplePath(startTime + delta * (i / numInstances));
+        // translate
+        instanceWorlds[i * 16 + 12] = x;
+        instanceWorlds[i * 16 + 13] = y;
+        // scale by pressure
+        instanceWorlds[i * 16 + 0] = p;
+        instanceWorlds[i * 16 + 5] = p;
+        instanceWorlds[i * 16 + 10] = p;
+    }
+}
+
+const instanceWorlds = createInstances();
+const arrays = {
+    position: createSquare(0.1),
+    instanceWorld: {
+        numComponents: 16,
+        data: instanceWorlds,
+        divisor: 1,
+    }
+};
+const bufferInfo = twgl.createBufferInfoFromArrays(gl, arrays);
+const vertexArrayInfo = twgl.createVertexArrayInfo(gl, programInfo, bufferInfo);
+
+const a = Math.min(gl.canvas.width, gl.canvas.height);
+const canvasAspect = [gl.canvas.width / a, gl.canvas.height / a];
+
+let initTime = null;
+let previousTime = 0.;
+function render(time) {
+    if (initTime === null) { initTime = time; }
+    time -= initTime;
+
+    const t = previousTime;
+    if (t >= 1.) {console.log('done'); return; }
+    const d = Math.min(0.01, 1. - t);
+    previousTime = t + d;
+
+    updateInstances(instanceWorlds, t, d);
+    twgl.setAttribInfoBufferFromArray(
+        gl, bufferInfo.attribs.instanceWorld, arrays.instanceWorld
+    );
+
+    const uniforms = {canvasAspect};
+    gl.useProgram(programInfo.program);
+    twgl.setBuffersAndAttributes(gl, programInfo, vertexArrayInfo);
+    twgl.setUniforms(programInfo, uniforms);
+    twgl.drawBufferInfo(
+        gl, vertexArrayInfo, gl.TRIANGLES, vertexArrayInfo.numelements, 0, numInstances
+    );
+    requestAnimationFrame(render);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    pathLoaded.then(() => {
+        requestAnimationFrame(render);
+    });
+});
+</script>
+</body>
+</html>
