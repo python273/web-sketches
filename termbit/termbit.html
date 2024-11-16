@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>termbit</title>
+    <style>
+      * { margin: 0; padding: 0; }
+      body { background: #111; overflow: hidden; }
+    </style>
+    <script src="../libs/twgl.min.js"></script>
+</head>
+<body>
+<script>
+// https://x.com/corvus_ikshana/status/1827636589817692391
+// https://codesandbox.io/p/sandbox/gallant-flower-yrv666
+
+const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#$&()*+-:;<=>?@[]^{}~';
+const fontSize = 11;
+const fontPadding = 2;
+// window.devicePixelRatio = 1.0;
+
+const canvas = document.createElement('canvas');
+document.body.appendChild(canvas);
+const gl = canvas.getContext('webgl2');
+
+// Create char atlas
+const textCanvas = document.createElement('canvas');
+textCanvas.width = chars.length * fontSize * window.devicePixelRatio;
+textCanvas.height = fontSize * window.devicePixelRatio;
+const textCtx = textCanvas.getContext('2d');
+textCanvas.style = 'image-rendering: crisp-edges; background: #000;';
+// document.body.appendChild(textCanvas)
+textCtx.setTransform(
+  window.devicePixelRatio, 0,
+  0, window.devicePixelRatio,
+  0, 0
+);
+textCtx.font = `${fontSize}px monospace`;
+textCtx.fillStyle = '#fff';
+textCtx.textBaseline = 'top';
+chars.split('').forEach((char, i) => {
+  textCtx.fillText(char, fontPadding + i * fontSize, 1);
+});
+const texture = twgl.createTexture(gl, {
+  src: textCanvas,
+  min: gl.LINEAR,
+  mag: gl.LINEAR,
+  wrap: gl.CLAMP_TO_EDGE,
+});
+
+const vs = `#version 300 es
+in vec4 position;
+in vec2 texcoord;
+
+uniform float time;
+uniform vec2 resolution;
+uniform int cols;
+
+out vec2 v_texcoord;
+
+void main() {
+  vec2 center = resolution * 0.5;
+
+  int yi = gl_InstanceID / cols;
+  float y = float(yi);
+  float x = float(gl_InstanceID - yi*cols);
+  float charIndex = mod(
+    float(gl_InstanceID) + floor(42.0 * floor(time/5000.0 + sin(float(gl_InstanceID)))),
+    ${chars.length}.
+  );
+
+  vec2 instancePos = vec2(x * ${fontSize}., y * ${fontSize}.);
+  vec2 relPos = instancePos - center;
+
+  float offset = sin(length(relPos) * 0.03 + time/100000.0) * 3.14159;
+  mat2 rotation = mat2(
+    cos(offset), -sin(offset),
+    sin(offset), cos(offset)
+  );
+
+  vec2 rotatedInstancePos = rotation * relPos + center;
+
+  vec2 vertPos = (position.xy + vec2(1.0)) * vec2(${fontSize}. * 0.5);
+  vec2 rotatedVertPos = rotation * vertPos;
+
+  vec2 finalPos = rotatedInstancePos + rotatedVertPos;
+
+  vec2 clipSpace = (finalPos / resolution) * 2.0 - 1.0;
+  gl_Position = vec4(clipSpace, 0, 1);
+  v_texcoord = vec2((charIndex + texcoord.x) / ${chars.length}., texcoord.y);
+}
+`;
+
+const fs = `#version 300 es
+precision highp float;
+
+in vec2 v_texcoord;
+out vec4 fragColor;
+
+uniform sampler2D u_texture;
+
+void main() {
+  vec4 color = texture(u_texture, v_texcoord);
+  fragColor = color;
+}
+`;
+
+const programInfo = twgl.createProgramInfo(gl, [vs, fs]);
+
+const arrays = {
+  position: {
+    numComponents: 2,
+    data: new Float32Array([
+      -1, -1,
+       1, -1,
+       1,  1,
+      -1, -1,
+       1,  1,
+      -1,  1,
+    ])
+  },
+  texcoord: {
+    numComponents: 2,
+    data: new Float32Array([
+      0, 1,
+      1, 1,
+      1, 0,
+      0, 1,
+      1, 0,
+      0, 0,
+    ])
+  }
+};
+
+const bufferInfo = twgl.createBufferInfoFromArrays(gl, arrays);
+const vertexArrayInfo = twgl.createVertexArrayInfo(gl, programInfo, bufferInfo);
+
+function render(time) {
+  canvas.style.width = `${document.documentElement.clientWidth}px`;
+  canvas.style.height = `${document.documentElement.clientHeight}px`;
+  twgl.resizeCanvasToDisplaySize(gl.canvas, window.devicePixelRatio);
+
+  const [w, h] = [
+    gl.canvas.width / window.devicePixelRatio,
+    gl.canvas.height / window.devicePixelRatio
+  ];
+  const [cols, rows] = [Math.floor(w / fontSize), Math.floor(h / fontSize)];
+
+  gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.clearColor(0, 0.094, 0.42, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  gl.useProgram(programInfo.program);
+  twgl.setBuffersAndAttributes(gl, programInfo, vertexArrayInfo);
+  twgl.setUniforms(programInfo, {
+    time,
+    u_texture: texture,
+    resolution: [w, h],
+    cols,
+  });
+  const instanceCount = cols * rows;
+  twgl.drawBufferInfo(gl, vertexArrayInfo, gl.TRIANGLES, 6, 0, instanceCount);
+  requestAnimationFrame(render);
+}
+
+requestAnimationFrame(render);
+</script>
+</body>
+</html>

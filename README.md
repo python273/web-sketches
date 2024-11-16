@@ -11,3 +11,5 @@
 [Circles Physics](https://python273.github.io/web-sketches/circles-physics/)
 
 [Scratch the surface](https://python273.github.io/web-sketches/scratch-the-surface/)
+
+[termbit](https://python273.github.io/web-sketches/termbit/termbit.html)
