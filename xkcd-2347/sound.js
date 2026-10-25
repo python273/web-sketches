@@ -12,14 +12,27 @@
       this.voices = new Set();
     }
 
-    unlock() {
-      if (!this.enabled || !this.active) return;
+    unlock(playback = false) {
+      if (!this.enabled || !this.active) return Promise.resolve(false);
       // Create/resume only inside a pointer or checkbox gesture.
       try {
+        if (playback && navigator.audioSession) {
+          try { navigator.audioSession.type = 'playback'; } catch { /* Optional Safari API. */ }
+        }
+        if (this.context?.state === 'closed') {
+          this.context = null;
+          this.air = null;
+          this.bodyWaves = null;
+          this.pending.length = 0;
+          this.voices.clear();
+        }
         if (!this.context) {
           const Audio = window.AudioContext || window.webkitAudioContext;
-          if (!Audio) return;
+          if (!Audio) return Promise.resolve(false);
           const ctx = this.context = new Audio();
+          ctx.addEventListener('statechange', () => {
+            if (this.context === ctx) this.onStateChange?.(ctx.state);
+          });
           this.master = ctx.createGain();
           this.master.gain.value = 0.8;
           const limiter = ctx.createDynamicsCompressor();
@@ -49,10 +62,13 @@
           source.start();
           this.air = { source, filter, gain, pan };
         }
-        if (this.context.state === 'suspended') this.context.resume().catch(() => {});
+        const resume = this.context.state === 'suspended' || this.context.state === 'interrupted'
+          ? this.context.resume() : undefined;
+        return Promise.resolve(resume).then(() => this.context.state === 'running', () => false);
       } catch {
         // Audio support or device availability must never interrupt the sketch.
         this.enabled = false;
+        return Promise.resolve(false);
       }
     }
 

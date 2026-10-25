@@ -11,21 +11,71 @@
   const tether = document.querySelector('#tether');
   const showShapes = document.querySelector('#show-shapes');
   const soundControl = document.querySelector('#sound');
-  soundControl.checked = true;
+  const motionControl = document.querySelector('#motion');
+  const controlStatus = document.querySelector('#control-status');
+  const phone = navigator.maxTouchPoints > 0 || matchMedia('(pointer: coarse)').matches;
+  const defaultSound = !phone;
+  let soundRequest = 0, soundPending = false;
+  function showControlStatus(message = '') {
+    controlStatus.textContent = message;
+    controlStatus.hidden = !message;
+  }
+  const motion = new DependencyMotion(world, message => {
+    motionControl.checked = false;
+    showControlStatus(message);
+  });
+  document.querySelector('#motion-option').hidden = !phone;
+  motionControl.checked = false;
+  soundControl.checked = defaultSound;
+  sound.setEnabled(defaultSound);
   showShapes.checked = false;
+  function soundUnavailable() {
+    soundControl.checked = false;
+    sound.setEnabled(false);
+    showControlStatus('Audio is paused or blocked. Check Sound to try again.');
+  }
+  sound.onStateChange = state => {
+    if (sound.active && sound.enabled && !soundPending && state !== 'running') soundUnavailable();
+  };
+  async function enableSound(playback) {
+    const request = ++soundRequest;
+    soundPending = true;
+    sound.setEnabled(true);
+    showControlStatus();
+    let timeout;
+    const running = await Promise.race([
+      sound.unlock(playback),
+      new Promise(resolve => { timeout = setTimeout(() => resolve(sound.context?.state === 'running'), 1000); }),
+    ]);
+    clearTimeout(timeout);
+    if (request !== soundRequest) return;
+    soundPending = false;
+    if (running) soundControl.checked = true;
+    else soundUnavailable();
+  }
   function updateAudioFocus() {
-    sound.setActive(!document.hidden && document.hasFocus());
+    const active = !document.hidden && document.hasFocus();
+    sound.setActive(active);
+    if (!active) motion.recalibrate();
+    else if (sound.enabled && sound.context && sound.context.state !== 'running' && !soundPending) soundUnavailable();
   }
   window.addEventListener('focus', updateAudioFocus);
   window.addEventListener('blur', () => sound.setActive(false));
-  window.addEventListener('pagehide', () => sound.setActive(false));
+  window.addEventListener('pagehide', () => {
+    sound.setActive(false);
+    motion.recalibrate();
+  });
   document.addEventListener('visibilitychange', updateAudioFocus);
   updateAudioFocus();
   window.addEventListener('pageshow', () => {
     showShapes.checked = false;
     shapes.setAttribute('hidden', '');
-    soundControl.checked = true;
-    sound.setEnabled(true);
+    ++soundRequest; soundPending = false;
+    soundControl.checked = defaultSound;
+    sound.setEnabled(defaultSound);
+    motionControl.checked = false;
+    motion.stop();
+    showControlStatus();
     updateAudioFocus();
   });
   const response = await fetch('dependency-optimized.svg');
@@ -105,7 +155,7 @@
     const id = event.target.closest('[data-id]')?.getAttribute('data-id');
     const body = id ? world.blocks[Number(id) - 1] : world.pick(p.x, p.y);
     if (!body) return;
-    sound.unlock();
+    if (sound.enabled && sound.context?.state !== 'running') enableSound(false);
     event.preventDefault(); pointerId = event.pointerId;
     svg.setPointerCapture(pointerId);
     world.grab(body, p.x, p.y);
@@ -121,7 +171,7 @@
   window.addEventListener('blur', release);
 
   function reset() {
-    release(); sound.clear(); world.reset(); accumulator = 0; build();
+    release(); sound.clear(); world.reset(); motion.recalibrate(); accumulator = 0; build();
     document.querySelector('#announcement').textContent = `Tower rebuilt. All ${world.blocks.length} blocks are balanced and physics is running.`;
   }
   document.querySelector('#reset').addEventListener('click', reset);
@@ -137,8 +187,23 @@
   }
   showShapes.addEventListener('change', updateShapes);
   soundControl.addEventListener('change', () => {
-    sound.setEnabled(soundControl.checked);
-    if (soundControl.checked) sound.unlock();
+    if (soundControl.checked) enableSound(true);
+    else {
+      ++soundRequest; soundPending = false;
+      sound.setEnabled(false);
+      showControlStatus();
+    }
+  });
+  motionControl.addEventListener('change', async () => {
+    showControlStatus();
+    if (!motionControl.checked) { motion.stop(); return; }
+    try {
+      await motion.enable();
+    } catch (error) {
+      motionControl.checked = false;
+      motion.stop();
+      showControlStatus(error.message || 'Motion permission could not be enabled.');
+    }
   });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) release();
@@ -149,7 +214,8 @@
     previousTime = now;
     // Fixed substeps keep the result independent of display refresh rate.
     // The cap only discards time lost to background tabs / a stalled browser.
-    while (accumulator >= STEP) { world.step(); accumulator -= STEP; }
+    const pageActive = !document.hidden && document.hasFocus();
+    while (accumulator >= STEP) { motion.apply(STEP, pageActive); world.step(); accumulator -= STEP; }
     sound.flush(svg.viewBox.baseVal);
     sound.motion(world.blocks, svg.viewBox.baseVal);
     render(); requestAnimationFrame(frame);

@@ -164,6 +164,7 @@
       this.bodies = [this.floor, ...this.blocks];
       this.cache = new Map(); this.joint = null; this.steps = 0; this.time = 0;
       this.gravity = 300; this.manifolds = [];
+      this.acceleration = { x: 0, y: 0 };
     }
     pick(x, y) {
       return [...this.blocks].reverse().find(b => b.contains(x, y)) || null;
@@ -212,7 +213,8 @@
     step(dt = STEP) {
       // Every body receives gravity on every substep, including at rest.
       for (const b of this.blocks) {
-        b.vy += this.gravity * dt;
+        b.vx += this.acceleration.x * dt;
+        b.vy += (this.gravity + this.acceleration.y) * dt;
         const drag = 1 / (1 + 0.025 * dt);
         b.vx *= drag; b.vy *= drag; b.omega *= drag;
       }
