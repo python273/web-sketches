@@ -151,9 +151,13 @@
     b.omega += cross(p.rbx, p.rby, ix, iy) * b.invI;
   }
 
-  function relativeVelocity(a, b, p) {
-    return { x: b.vx - b.omega * p.rby - a.vx + a.omega * p.ray,
-      y: b.vy + b.omega * p.rbx - a.vy - a.omega * p.rax };
+  function normalVelocity(a, b, p, nx, ny) {
+    return (b.vx - b.omega * p.rby - a.vx + a.omega * p.ray) * nx
+      + (b.vy + b.omega * p.rbx - a.vy - a.omega * p.rax) * ny;
+  }
+  function tangentVelocity(a, b, p, nx, ny) {
+    return -(b.vx - b.omega * p.rby - a.vx + a.omega * p.ray) * ny
+      + (b.vy + b.omega * p.rbx - a.vy - a.omega * p.rax) * nx;
   }
 
   class World {
@@ -255,8 +259,7 @@
             const rtB = p.rbx * m.nx + p.rby * m.ny;
             p.kn = a.invMass + b.invMass + a.invI * p.rnA ** 2 + b.invI * p.rnB ** 2;
             p.mt = 1 / (a.invMass + b.invMass + a.invI * rtA ** 2 + b.invI * rtB ** 2);
-            const v = relativeVelocity(a, b, p);
-            const vn = v.x * m.nx + v.y * m.ny;
+            const vn = normalVelocity(a, b, p, m.nx, m.ny);
             m.approachSpeed = Math.max(m.approachSpeed, -vn);
             p.bias = vn < -25 ? -0.06 * vn : 0;
             const old = previous && previous.nx * m.nx + previous.ny * m.ny > 0.95
@@ -304,9 +307,8 @@
       const { a, b, nx, ny, contacts } = m;
       if (m.blockSolve) {
         const [p, q] = contacts;
-        const vp = relativeVelocity(a, b, p), vq = relativeVelocity(a, b, q);
-        const b1 = vp.x * nx + vp.y * ny - p.bias - p.kn * p.normalImpulse - m.k12 * q.normalImpulse;
-        const b2 = vq.x * nx + vq.y * ny - q.bias - m.k12 * p.normalImpulse - q.kn * q.normalImpulse;
+        const b1 = normalVelocity(a, b, p, nx, ny) - p.bias - p.kn * p.normalImpulse - m.k12 * q.normalImpulse;
+        const b2 = normalVelocity(a, b, q, nx, ny) - q.bias - m.k12 * p.normalImpulse - q.kn * q.normalImpulse;
         let x = (m.k12 * b2 - q.kn * b1) / m.det;
         let y = (m.k12 * b1 - p.kn * b2) / m.det;
         let valid = x >= 0 && y >= 0;
@@ -320,15 +322,17 @@
         }
       } else {
         for (const p of contacts) {
-          const v = relativeVelocity(a, b, p), old = p.normalImpulse;
-          p.normalImpulse = Math.max(0, old + (p.bias - v.x * nx - v.y * ny) / p.kn);
+          const vx = b.vx - b.omega * p.rby - a.vx + a.omega * p.ray;
+          const vy = b.vy + b.omega * p.rbx - a.vy - a.omega * p.rax;
+          const old = p.normalImpulse;
+          p.normalImpulse = Math.max(0, old + (p.bias - vx * nx - vy * ny) / p.kn);
           impulse(a, b, p, nx * (p.normalImpulse - old), ny * (p.normalImpulse - old));
         }
       }
       for (const p of contacts) {
-        const v = relativeVelocity(a, b, p), old = p.tangentImpulse;
+        const old = p.tangentImpulse;
         const limit = 0.65 * p.normalImpulse;
-        p.tangentImpulse = clamp(old - (-v.x * ny + v.y * nx) * p.mt, -limit, limit);
+        p.tangentImpulse = clamp(old - tangentVelocity(a, b, p, nx, ny) * p.mt, -limit, limit);
         const d = p.tangentImpulse - old;
         impulse(a, b, p, -ny * d, nx * d);
       }
@@ -343,6 +347,7 @@
         const pa = a.worldPoint(p.localA), pb = b.worldPoint(p.localB);
         const separation = (pb.x - pa.x) * nx + (pb.y - pa.y) * ny + p.separation;
         const correction = clamp(0.25 * (separation + 0.006), -1.5, 0);
+        if (correction === 0) continue;
         const rax = pa.x - a.x, ray = pa.y - a.y;
         const rbx = pb.x - b.x, rby = pb.y - b.y;
         const ra = cross(rax, ray, nx, ny), rb = cross(rbx, rby, nx, ny);

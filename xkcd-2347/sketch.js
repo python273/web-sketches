@@ -124,6 +124,20 @@
     return node;
   }
 
+  const drawnPoses = new WeakMap();
+  function attribute(node, name, value) {
+    if (node.getAttribute(name) !== value) node.setAttribute(name, value);
+  }
+  function drawBody(node, b, tolerance) {
+    const last = drawnPoses.get(node);
+    // Physics stays fully awake and unrounded. Only rasterize a new pose when
+    // its furthest corner can move by at least 0.15 CSS pixels on this screen.
+    const radius = Math.hypot(b.width, b.height) / 2;
+    if (last && Math.hypot(b.x - last.x, b.y - last.y) + Math.abs(b.angle - last.angle) * radius < tolerance) return;
+    attribute(node, 'transform', `translate(${b.x.toFixed(4)} ${b.y.toFixed(4)}) rotate(${(b.angle * 180 / Math.PI).toFixed(4)})`);
+    drawnPoses.set(node, { x: b.x, y: b.y, angle: b.angle });
+  }
+
   // The loaded bird is held by the sling; released birds join the same solver
   // as the tower. Their collision boxes are visible with the Physics checkbox.
   const birdLayer = element('g', { id: 'birds', hidden: '', 'aria-label': 'Pull the bird right and release to launch left' }, svg);
@@ -182,14 +196,14 @@
     }
     bird.pull = null;
   }
-  function renderBird() {
+  function renderBird(tolerance) {
     if (!birdControl.checked) return;
     const p = bird.pull || bird;
     const ready = world.time >= bird.reloadAt;
     loadedBird.toggleAttribute('hidden', !ready);
-    loadedBird.setAttribute('transform', `translate(${p.x} ${p.y})`);
-    fork.setAttribute('d', `M${bird.x - 1} 468 L${bird.x + 1} 433 L${bird.x - 12} 405 M${bird.x + 1} 433 L${bird.x + 12} 405`);
-    bands.setAttribute('d', ready ? `M${bird.x - 12} 405 L${p.x} ${p.y + 2} L${bird.x + 12} 405` : `M${bird.x - 12} 405 L${bird.x + 12} 405`);
+    attribute(loadedBird, 'transform', `translate(${p.x} ${p.y})`);
+    attribute(fork, 'd', `M${bird.x - 1} 468 L${bird.x + 1} 433 L${bird.x - 12} 405 M${bird.x + 1} 433 L${bird.x + 12} 405`);
+    attribute(bands, 'd', ready ? `M${bird.x - 12} 405 L${p.x} ${p.y + 2} L${bird.x + 12} 405` : `M${bird.x - 12} 405 L${bird.x + 12} 405`);
     let d = '';
     if (bird.pull) {
       const v = birdVelocity();
@@ -200,12 +214,11 @@
         d += `${i ? 'L' : 'M'}${x} ${y}`;
       }
     }
-    trajectory.setAttribute('d', d);
+    attribute(trajectory, 'd', d);
     for (const shot of shots) {
       const b = shot.body;
-      const transform = `translate(${b.x} ${b.y}) rotate(${b.angle * 180 / Math.PI})`;
-      shot.node.setAttribute('transform', transform);
-      if (!shapes.hasAttribute('hidden')) shot.shape.setAttribute('transform', transform);
+      drawBody(shot.node, b, tolerance);
+      if (!shapes.hasAttribute('hidden')) drawBody(shot.shape, b, tolerance);
     }
   }
   birdControl.addEventListener('change', () => {
@@ -228,11 +241,12 @@
   }
 
   function render() {
-    renderBird();
+    const tolerance = 0.15 * svg.viewBox.baseVal.width / Math.max(1, svg.clientWidth);
+    renderBird(tolerance);
+    const showCollisionShapes = !shapes.hasAttribute('hidden');
     world.blocks.forEach((b, i) => {
-      const transform = `translate(${b.x.toFixed(4)} ${b.y.toFixed(4)}) rotate(${(b.angle * 180 / Math.PI).toFixed(4)})`;
-      paths[i].setAttribute('transform', transform);
-      if (!shapes.hasAttribute('hidden')) rectangles[i].setAttribute('transform', transform);
+      drawBody(paths[i], b, tolerance);
+      if (showCollisionShapes) drawBody(rectangles[i], b, tolerance);
     });
     if (world.joint) {
       const j = world.joint, p = j.body.worldPoint(j.local);
