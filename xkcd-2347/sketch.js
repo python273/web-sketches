@@ -3,15 +3,21 @@
   'use strict';
   const { World, STEP } = DependencyPhysics;
   const world = new World();
+  const sound = new DependencySound();
+  world.onImpact = m => sound.impact(m, world.time);
   const svg = document.querySelector('#scene');
   const blocks = document.querySelector('#blocks');
   const shapes = document.querySelector('#collision-shapes');
   const tether = document.querySelector('#tether');
   const showShapes = document.querySelector('#show-shapes');
+  const soundControl = document.querySelector('#sound');
+  soundControl.checked = true;
   showShapes.checked = false;
   window.addEventListener('pageshow', () => {
     showShapes.checked = false;
     shapes.setAttribute('hidden', '');
+    soundControl.checked = true;
+    sound.setEnabled(true);
   });
   const response = await fetch('dependency-optimized.svg');
   if (!response.ok) throw new Error(`Artwork request failed: ${response.status}`);
@@ -90,6 +96,7 @@
     const id = event.target.closest('[data-id]')?.getAttribute('data-id');
     const body = id ? world.blocks[Number(id) - 1] : world.pick(p.x, p.y);
     if (!body) return;
+    sound.unlock();
     event.preventDefault(); pointerId = event.pointerId;
     svg.setPointerCapture(pointerId);
     world.grab(body, p.x, p.y);
@@ -105,7 +112,7 @@
   window.addEventListener('blur', release);
 
   function reset() {
-    release(); world.reset(); accumulator = 0; build();
+    release(); sound.clear(); world.reset(); accumulator = 0; build();
     document.querySelector('#announcement').textContent = `Tower rebuilt. All ${world.blocks.length} blocks are balanced and physics is running.`;
   }
   document.querySelector('#reset').addEventListener('click', reset);
@@ -120,6 +127,13 @@
     shapes.toggleAttribute('hidden', !showShapes.checked); render();
   }
   showShapes.addEventListener('change', updateShapes);
+  soundControl.addEventListener('change', () => {
+    sound.setEnabled(soundControl.checked);
+    if (soundControl.checked) sound.unlock();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) sound.clear();
+  });
 
   function frame(now) {
     if (previousTime !== null) accumulator += Math.min((now - previousTime) / 1000, 0.1);
@@ -127,6 +141,8 @@
     // Fixed substeps keep the result independent of display refresh rate.
     // The cap only discards time lost to background tabs / a stalled browser.
     while (accumulator >= STEP) { world.step(); accumulator -= STEP; }
+    sound.flush(svg.viewBox.baseVal);
+    sound.motion(world.blocks, svg.viewBox.baseVal);
     render(); requestAnimationFrame(frame);
   }
   build(); requestAnimationFrame(frame);

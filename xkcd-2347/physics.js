@@ -223,6 +223,7 @@
           const m = collide(a, b);
           if (!m) continue;
           const key = `${a.id}:${b.id}`, previous = this.cache.get(key);
+          m.approachSpeed = 0;
           for (const p of m.contacts) {
             p.rax = p.x - a.x; p.ray = p.y - a.y;
             p.rbx = p.x - b.x; p.rby = p.y - b.y;
@@ -234,6 +235,7 @@
             p.mt = 1 / (a.invMass + b.invMass + a.invI * rtA ** 2 + b.invI * rtB ** 2);
             const v = relativeVelocity(a, b, p);
             const vn = v.x * m.nx + v.y * m.ny;
+            m.approachSpeed = Math.max(m.approachSpeed, -vn);
             p.bias = vn < -25 ? -0.06 * vn : 0;
             const old = previous && previous.nx * m.nx + previous.ny * m.ny > 0.95
               ? previous.contacts.find(q => q.id === p.id) : null;
@@ -259,6 +261,12 @@
       for (let iteration = 0; iteration < 32; iteration++) {
         this.solveJoint();
         for (const m of manifolds) this.solveVelocity(m);
+      }
+      // Report actual impacts, not the continuous impulses supporting a stack.
+      if (this.onImpact) {
+        for (const m of manifolds) {
+          if (m.approachSpeed > 18 && m.contacts.some(p => p.normalImpulse > 0)) this.onImpact(m);
+        }
       }
       for (const b of this.blocks) {
         b.x += b.vx * dt; b.y += b.vy * dt; b.angle += b.omega * dt; b.update();

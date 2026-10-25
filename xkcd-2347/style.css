@@ -17,5 +17,8 @@ nav label { display: inline-flex; align-items: center; gap: 5px; cursor: default
 nav input { margin: 0; width: 11px; height: 11px; accent-color: #777; cursor: default; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 @media (max-width: 600px) {
-  nav { font-size: 10px; gap: 18px; }
+  nav { font-size: 10px; gap: 12px; }
+}
+@media (max-width: 480px) {
+  nav > span { display: none; }
 }
