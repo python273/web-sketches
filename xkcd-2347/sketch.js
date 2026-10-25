@@ -5,6 +5,15 @@
   const world = new World();
   const sound = new DependencySound();
   world.onImpact = m => sound.impact(m, world.time);
+  // Remembered resting layout. Rebuild animates from the live pose back to this.
+  const home = world.blocks.map(b => ({ x: b.x, y: b.y }));
+  // Explosion pivot: the bottom edge centre of the lowest block (the foundation).
+  const base = world.blocks.reduce((low, b) => b.y + b.height / 2 > low.y + low.height / 2 ? b : low);
+  const pivot = { x: base.x, y: base.y + base.height / 2 };
+  const rebuild = { active: false, start: 0, from: [], explode: [], delays: [] };
+  const FLY_MS = 380, STAGGER_MS = 240, SETTLE_MS = 180;
+  const easeInOut = t => t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
+  const easeOut = t => 1 - (1 - t) ** 3;
   const svg = document.querySelector('#scene');
   const blocks = document.querySelector('#blocks');
   const shapes = document.querySelector('#collision-shapes');
@@ -68,6 +77,7 @@
   document.addEventListener('visibilitychange', updateAudioFocus);
   updateAudioFocus();
   window.addEventListener('pageshow', () => {
+    if (rebuild.active) finishRebuild();
     showShapes.checked = false;
     shapes.setAttribute('hidden', '');
     ++soundRequest; soundPending = false;
@@ -150,6 +160,7 @@
   }
 
   svg.addEventListener('pointerdown', event => {
+    if (rebuild.active) return;
     if (!event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0)) return;
     const p = pointerPosition(event);
     const id = event.target.closest('[data-id]')?.getAttribute('data-id');
@@ -170,9 +181,56 @@
   }
   window.addEventListener('blur', release);
 
-  function reset() {
+  function animateRebuild(now) {
+    const t = now - rebuild.start;
+    world.blocks.forEach((_, i) => {
+      const from = rebuild.from[i], out = rebuild.explode[i], h = home[i];
+      let x, y, angle;
+      if (t < FLY_MS) {
+        const p = easeInOut(t / FLY_MS);
+        x = from.x + (out.x - from.x) * p;
+        y = from.y + (out.y - from.y) * p;
+        // De-rotate on the way out, so every block waits upright to return.
+        angle = from.angle * (1 - p);
+      } else {
+        // Each block waits its turn, bottom of the stack first, then settles upright.
+        const q = Math.min(1, Math.max(0, (t - FLY_MS - rebuild.delays[i]) / SETTLE_MS));
+        const p = easeOut(q);
+        x = out.x + (h.x - out.x) * p;
+        y = out.y + (h.y - out.y) * p;
+        angle = 0;
+      }
+      const transform = `translate(${x.toFixed(4)} ${y.toFixed(4)}) rotate(${(angle * 180 / Math.PI).toFixed(4)})`;
+      paths[i].setAttribute('transform', transform);
+      if (!shapes.hasAttribute('hidden')) rectangles[i].setAttribute('transform', transform);
+    });
+    return t >= FLY_MS + STAGGER_MS + SETTLE_MS;
+  }
+
+  function finishRebuild() {
+    rebuild.active = false;
+    svg.classList.remove('rebuilding');
     release(); sound.clear(); world.reset(); motion.recalibrate(); accumulator = 0; build();
     document.querySelector('#announcement').textContent = `Tower rebuilt. All ${world.blocks.length} blocks are balanced and physics is running.`;
+  }
+
+  function reset() {
+    if (rebuild.active) return;
+    release(); sound.clear();
+    rebuild.active = true;
+    rebuild.start = performance.now();
+    rebuild.from = world.blocks.map(b => ({ x: b.x, y: b.y, angle: b.angle }));
+    // orig_pos is measured from the foundation's bottom edge centre. Each block
+    // flies out to 1.08x that offset, then returns to the exact saved pose.
+    rebuild.explode = home.map(h => ({
+      x: pivot.x + (h.x - pivot.x) * 1.08,
+      y: pivot.y + (h.y - pivot.y) * 1.08,
+    }));
+    const order = world.blocks.map((_, i) => i).sort((a, b) => home[b].y - home[a].y);
+    const last = order.length - 1;
+    rebuild.delays = new Array(order.length);
+    order.forEach((index, rank) => { rebuild.delays[index] = last ? rank / last * STAGGER_MS : 0; });
+    svg.classList.add('rebuilding');
   }
   document.querySelector('#reset').addEventListener('click', reset);
   window.addEventListener('keydown', event => {
@@ -206,19 +264,26 @@
     }
   });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) release();
+    if (!document.hidden) return;
+    release();
+    if (rebuild.active) finishRebuild();
   });
 
   function frame(now) {
     if (previousTime !== null) accumulator += Math.min((now - previousTime) / 1000, 0.1);
     previousTime = now;
-    // Fixed substeps keep the result independent of display refresh rate.
-    // The cap only discards time lost to background tabs / a stalled browser.
-    const pageActive = !document.hidden && document.hasFocus();
-    while (accumulator >= STEP) { motion.apply(STEP, pageActive); world.step(); accumulator -= STEP; }
-    sound.flush(svg.viewBox.baseVal);
-    sound.motion(world.blocks, svg.viewBox.baseVal);
-    render(); requestAnimationFrame(frame);
+    if (rebuild.active) {
+      if (animateRebuild(now)) finishRebuild();
+    } else {
+      // Fixed substeps keep the result independent of display refresh rate.
+      // The cap only discards time lost to background tabs / a stalled browser.
+      const pageActive = !document.hidden && document.hasFocus();
+      while (accumulator >= STEP) { motion.apply(STEP, pageActive); world.step(); accumulator -= STEP; }
+      sound.flush(svg.viewBox.baseVal);
+      sound.motion(world.blocks, svg.viewBox.baseVal);
+      render();
+    }
+    requestAnimationFrame(frame);
   }
   build(); requestAnimationFrame(frame);
   // Useful for inspecting the live solver in the browser console.
