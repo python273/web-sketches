@@ -6,13 +6,14 @@
   class ImpactSound {
     constructor() {
       this.enabled = true;
+      this.active = true;
       this.context = null;
       this.pending = [];
       this.voices = new Set();
     }
 
     unlock() {
-      if (!this.enabled) return;
+      if (!this.enabled || !this.active) return;
       // Create/resume only inside a pointer or checkbox gesture.
       try {
         if (!this.context) {
@@ -57,14 +58,24 @@
 
     setEnabled(enabled) {
       this.enabled = enabled;
-      if (!enabled) this.clear();
+      this.updateOutput();
+    }
+
+    setActive(active) {
+      this.active = active;
+      this.updateOutput();
+    }
+
+    updateOutput() {
+      const audible = this.enabled && this.active;
+      if (!audible) this.clear();
       if (this.context) {
-        this.master.gain.setTargetAtTime(enabled ? 0.8 : 0, this.context.currentTime, 0.01);
+        this.master.gain.setTargetAtTime(audible ? 0.8 : 0, this.context.currentTime, 0.01);
       }
     }
 
     impact(m, time) {
-      if (!this.enabled || this.context?.state !== 'running') return;
+      if (!this.enabled || !this.active || this.context?.state !== 'running') return;
       const { a, b } = m;
       const mass = 1 / (a.invMass + b.invMass);
       const energy = Math.sqrt(mass) * m.approachSpeed;
@@ -79,7 +90,7 @@
     flush(view) {
       const hits = this.pending;
       this.pending = [];
-      if (!this.enabled || this.context?.state !== 'running') return;
+      if (!this.enabled || !this.active || this.context?.state !== 'running') return;
       const now = this.context.currentTime + 0.025;
       const firstTime = hits[0]?.time || 0;
       for (const hit of hits) {
@@ -168,7 +179,7 @@
     }
 
     motion(blocks, view) {
-      if (!this.enabled || this.context?.state !== 'running' || !this.air) return;
+      if (!this.enabled || !this.active || this.context?.state !== 'running' || !this.air) return;
       let energy = 0, position = 0, fastest = 0;
       for (const b of blocks) {
         if (b.x + b.ex < view.x || b.x - b.ex > view.x + view.width || b.y + b.ey < view.y) continue;

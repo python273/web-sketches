@@ -13,11 +13,20 @@
   const soundControl = document.querySelector('#sound');
   soundControl.checked = true;
   showShapes.checked = false;
+  function updateAudioFocus() {
+    sound.setActive(!document.hidden && document.hasFocus());
+  }
+  window.addEventListener('focus', updateAudioFocus);
+  window.addEventListener('blur', () => sound.setActive(false));
+  window.addEventListener('pagehide', () => sound.setActive(false));
+  document.addEventListener('visibilitychange', updateAudioFocus);
+  updateAudioFocus();
   window.addEventListener('pageshow', () => {
     showShapes.checked = false;
     shapes.setAttribute('hidden', '');
     soundControl.checked = true;
     sound.setEnabled(true);
+    updateAudioFocus();
   });
   const response = await fetch('dependency-optimized.svg');
   if (!response.ok) throw new Error(`Artwork request failed: ${response.status}`);
@@ -132,7 +141,7 @@
     if (soundControl.checked) sound.unlock();
   });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) sound.clear();
+    if (document.hidden) release();
   });
 
   function frame(now) {
