@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <title>Dependency — interactive xkcd 2347</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <svg id="scene" viewBox="0 0 385 489" role="img" aria-label="Dependency — interactive xkcd 2347" aria-describedby="scene-description">
+      <desc id="scene-description">All modern digital infrastructure rests on a project some random person in Nebraska has been thanklessly maintaining since 2003. Drag any block to pull it. Gravity runs continuously. Press R or Rebuild to start again.</desc>
+      <path id="lettering" fill="#000" fill-rule="evenodd"/>
+      <g id="blocks"></g>
+      <g id="collision-shapes" aria-hidden="true" hidden></g>
+      <g id="tether" hidden aria-hidden="true"><path/><circle r="2"/></g>
+    </svg>
+    <nav aria-label="Sketch controls">
+      <span>Drag a block to pull.</span>
+      <button id="reset" type="button" title="Rebuild (R)">↺ Rebuild</button>
+      <label><input id="show-shapes" type="checkbox" autocomplete="off"> Physics</label>
+      <a href="https://xkcd.com/2347/" target="_blank" rel="noreferrer" title="Dependency by Randall Munroe · CC BY-NC 2.5">xkcd 2347 ↗</a>
+    </nav>
+    <div id="announcement" class="sr-only" aria-live="polite"></div>
+  </main>
+  <script src="physics.js"></script>
+  <script src="sketch.js"></script>
+</body>
+</html>
