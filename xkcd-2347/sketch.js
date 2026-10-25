@@ -21,6 +21,9 @@
   const showShapes = document.querySelector('#show-shapes');
   const soundControl = document.querySelector('#sound');
   const motionControl = document.querySelector('#motion');
+  const birdControl = document.querySelector('#bird');
+  birdControl.checked = false;
+  let bird = null;
   const controlStatus = document.querySelector('#control-status');
   const phone = navigator.maxTouchPoints > 0 || matchMedia('(pointer: coarse)').matches;
   const defaultSound = !phone;
@@ -79,6 +82,8 @@
   window.addEventListener('pageshow', () => {
     if (rebuild.active) finishRebuild();
     showShapes.checked = false;
+    birdControl.checked = false;
+    if (bird) clearBirds();
     shapes.setAttribute('hidden', '');
     ++soundRequest; soundPending = false;
     soundControl.checked = defaultSound;
@@ -104,9 +109,10 @@
     if (!width || !height) return;
     // Keep the original drawing's proportions, anchor the floor at the bottom,
     // and expose the whole available world instead of clipping to comic edges.
-    const scale = Math.min(Math.max(1, width - 24) / 385, Math.max(1, height - 24) / 469);
+    const drawingWidth = birdControl.checked ? 500 : 385;
+    const scale = Math.min(Math.max(1, width - 24) / drawingWidth, Math.max(1, height - 24) / 469);
     const worldWidth = width / scale, worldHeight = height / scale;
-    svg.setAttribute('viewBox', `${192.5 - worldWidth / 2} ${469 - worldHeight + 8 / scale} ${worldWidth} ${worldHeight}`);
+    svg.setAttribute('viewBox', `${drawingWidth / 2 - worldWidth / 2} ${469 - worldHeight + 8 / scale} ${worldWidth} ${worldHeight}`);
   }
   new ResizeObserver(resizeScene).observe(svg);
   resizeScene();
@@ -117,6 +123,95 @@
     parent.append(node);
     return node;
   }
+
+  // The loaded bird is held by the sling; released birds join the same solver
+  // as the tower. Their collision boxes are visible with the Physics checkbox.
+  const birdLayer = element('g', { id: 'birds', hidden: '', 'aria-label': 'Pull the bird right and release to launch left' }, svg);
+  const sling = element('g', { fill: 'none', stroke: '#333', 'stroke-width': 1.5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, birdLayer);
+  const fork = element('path', {}, sling);
+  const bands = element('path', { stroke: '#777', 'stroke-width': 1 }, sling);
+  const trajectory = element('path', { fill: 'none', stroke: '#aaa', 'stroke-width': 1.5, 'stroke-linecap': 'round', 'stroke-dasharray': '0.1 9', 'pointer-events': 'none' }, birdLayer);
+  const loadedBird = drawBird(birdLayer);
+  const shots = [];
+  bird = { x: 452, y: 410, pull: null, pointer: null, reloadAt: 0 };
+
+  function drawBird(parent) {
+    const g = element('g', { 'data-bird': '', 'aria-label': 'Bird' }, parent);
+    // A small ink-drawn bird facing left, with its body matching an 18px box.
+    element('path', { d: 'M8 -3 L14 -7 L12 -1 L15 2 L8 4', fill: '#333' }, g);
+    element('path', { d: 'M-7 -8 Q0 -11 7 -8 Q10 -2 8 7 Q1 10 -7 8 Q-10 1 -7 -8Z', fill: 'white', stroke: '#222', 'stroke-width': 1.3 }, g);
+    element('path', { d: 'M-8 -1 L-15 2 L-8 4Z', fill: '#777', stroke: '#222', 'stroke-width': 1 }, g);
+    element('path', { d: 'M-5 -6 L0 -4 M1 -9 L-1 -13 L4 -10', fill: 'none', stroke: '#222', 'stroke-width': 1.5, 'stroke-linecap': 'round' }, g);
+    element('circle', { cx: -4, cy: -2, r: 1.3, fill: '#222' }, g);
+    element('path', { d: 'M2 1 Q7 2 4 6 Q1 6 2 1', fill: 'none', stroke: '#777', 'stroke-width': 0.8 }, g);
+    // Larger transparent target helps touch users pull the small bird.
+    element('circle', { r: 20, fill: 'transparent' }, g);
+    return g;
+  }
+  function clearBirds() {
+    if (bird.pointer !== null) release();
+    for (const shot of shots) {
+      world.removeProjectile(shot.body); shot.node.remove(); shot.shape.remove();
+    }
+    shots.length = 0; bird.pull = null; bird.reloadAt = 0;
+    birdLayer.toggleAttribute('hidden', !birdControl.checked);
+    resizeScene();
+  }
+  function birdVelocity() {
+    const p = bird.pull || bird;
+    return { x: (bird.x - p.x) * 21, y: (bird.y - p.y) * 21 };
+  }
+  function pullBird(p) {
+    // Pull right to fire left. Limit extension to keep thin-block collisions
+    // resolved by the existing 240Hz solver, even at full power.
+    const dx = Math.max(0, p.x - bird.x), dy = p.y - bird.y;
+    const factor = Math.min(1, 42 / (Math.hypot(dx, dy) || 1));
+    bird.pull = { x: bird.x + dx * factor, y: bird.y + dy * factor };
+  }
+  function launchBird() {
+    const p = bird.pull, v = birdVelocity();
+    if (p && Math.hypot(v.x, v.y) > 25) {
+      if (shots.length >= 8) {
+        const old = shots.shift(); world.removeProjectile(old.body); old.node.remove(); old.shape.remove();
+      }
+      const body = world.addProjectile(p.x, p.y, v.x, v.y);
+      const node = drawBird(birdLayer);
+      const shape = element('rect', { x: -9, y: -9, width: 18, height: 18 }, shapes);
+      shots.push({ body, node, shape });
+      bird.reloadAt = world.time + 0.1;
+    }
+    bird.pull = null;
+  }
+  function renderBird() {
+    if (!birdControl.checked) return;
+    const p = bird.pull || bird;
+    const ready = world.time >= bird.reloadAt;
+    loadedBird.toggleAttribute('hidden', !ready);
+    loadedBird.setAttribute('transform', `translate(${p.x} ${p.y})`);
+    fork.setAttribute('d', `M${bird.x - 1} 468 L${bird.x + 1} 433 L${bird.x - 12} 405 M${bird.x + 1} 433 L${bird.x + 12} 405`);
+    bands.setAttribute('d', ready ? `M${bird.x - 12} 405 L${p.x} ${p.y + 2} L${bird.x + 12} 405` : `M${bird.x - 12} 405 L${bird.x + 12} 405`);
+    let d = '';
+    if (bird.pull) {
+      const v = birdVelocity();
+      for (let i = 0; i <= 24; i++) {
+        const t = i / 40;
+        const x = p.x + v.x * t, y = p.y + v.y * t + world.gravity * t * t / 2;
+        if (y > 460) break;
+        d += `${i ? 'L' : 'M'}${x} ${y}`;
+      }
+    }
+    trajectory.setAttribute('d', d);
+    for (const shot of shots) {
+      const b = shot.body;
+      const transform = `translate(${b.x} ${b.y}) rotate(${b.angle * 180 / Math.PI})`;
+      shot.node.setAttribute('transform', transform);
+      if (!shapes.hasAttribute('hidden')) shot.shape.setAttribute('transform', transform);
+    }
+  }
+  birdControl.addEventListener('change', () => {
+    clearBirds(); render();
+    document.querySelector('#announcement').textContent = birdControl.checked ? 'Pull the bird right, then release to launch left. A new bird loads after each shot.' : 'Bird disabled.';
+  });
 
   function build() {
     blocks.replaceChildren(); shapes.replaceChildren();
@@ -133,6 +228,7 @@
   }
 
   function render() {
+    renderBird();
     world.blocks.forEach((b, i) => {
       const transform = `translate(${b.x.toFixed(4)} ${b.y.toFixed(4)}) rotate(${(b.angle * 180 / Math.PI).toFixed(4)})`;
       paths[i].setAttribute('transform', transform);
@@ -152,6 +248,7 @@
 
   function release() {
     const captured = pointerId;
+    bird.pointer = null; bird.pull = null;
     world.release(); pointerId = null;
     if (captured !== null && svg.hasPointerCapture(captured)) svg.releasePointerCapture(captured);
     svg.classList.remove('dragging');
@@ -163,6 +260,12 @@
     if (rebuild.active) return;
     if (!event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0)) return;
     const p = pointerPosition(event);
+    if (birdControl.checked && world.time >= bird.reloadAt && event.target.closest('#birds [data-bird]') === loadedBird) {
+      event.preventDefault(); pointerId = bird.pointer = event.pointerId;
+      svg.setPointerCapture(pointerId); pullBird(p);
+      if (sound.enabled && sound.context?.state !== 'running') enableSound(false);
+      render(); return;
+    }
     const id = event.target.closest('[data-id]')?.getAttribute('data-id');
     const body = id ? world.blocks[Number(id) - 1] : world.pick(p.x, p.y);
     if (!body) return;
@@ -174,10 +277,15 @@
     svg.classList.add('dragging'); tether.removeAttribute('hidden'); render();
   });
   svg.addEventListener('pointermove', event => {
+    if (event.pointerId === bird.pointer) { pullBird(pointerPosition(event)); render(); return; }
     if (event.pointerId === pointerId && world.joint) world.joint.target = pointerPosition(event);
   });
   for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
-    svg.addEventListener(type, event => { if (event.pointerId === pointerId) release(); });
+    svg.addEventListener(type, event => {
+      if (event.pointerId !== pointerId) return;
+      if (type === 'pointerup' && bird.pointer === pointerId) launchBird();
+      release(); render();
+    });
   }
   window.addEventListener('blur', release);
 
@@ -210,13 +318,14 @@
   function finishRebuild() {
     rebuild.active = false;
     svg.classList.remove('rebuilding');
-    release(); sound.clear(); world.reset(); motion.recalibrate(); accumulator = 0; build();
+    release(); sound.clear(); clearBirds(); world.reset(); motion.recalibrate(); accumulator = 0; build();
     document.querySelector('#announcement').textContent = `Tower rebuilt. All ${world.blocks.length} blocks are balanced and physics is running.`;
   }
 
   function reset() {
     if (rebuild.active) return;
     release(); sound.clear();
+    clearBirds();
     rebuild.active = true;
     rebuild.start = performance.now();
     rebuild.from = world.blocks.map(b => ({ x: b.x, y: b.y, angle: b.angle }));
@@ -280,7 +389,7 @@
       const pageActive = !document.hidden && document.hasFocus();
       while (accumulator >= STEP) { motion.apply(STEP, pageActive); world.step(); accumulator -= STEP; }
       sound.flush(svg.viewBox.baseVal);
-      sound.motion(world.blocks, svg.viewBox.baseVal);
+      sound.motion([...world.blocks, ...world.projectiles], svg.viewBox.baseVal);
       render();
     }
     requestAnimationFrame(frame);

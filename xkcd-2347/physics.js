@@ -161,6 +161,8 @@
     reset() {
       this.floor = new Body(0, -5e6, 469, 1e7, 100, 'Floor', true);
       this.blocks = layout.map((r, i) => new Body(i + 1, ...r));
+      this.projectiles = [];
+      this.nextId = 63;
       this.bodies = [this.floor, ...this.blocks];
       this.cache = new Map(); this.joint = null; this.steps = 0; this.time = 0;
       this.gravity = 300; this.manifolds = [];
@@ -173,6 +175,24 @@
       this.joint = { body, local: body.localPoint(x, y), target: { x, y }, ix: 0, iy: 0 };
     }
     release() { this.joint = null; }
+
+    addProjectile(x, y, vx, vy) {
+      const body = new Body(this.nextId++, x - 9, y - 9, 18, 18, 'Bird');
+      // Denser than the hollow infrastructure blocks, so a shot can drive
+      // through the stack instead of stopping at the first large block.
+      body.mass *= 4;
+      body.invMass /= 4;
+      body.invI /= 4;
+      body.vx = vx; body.vy = vy;
+      this.projectiles.push(body); this.bodies.push(body);
+      return body;
+    }
+    removeProjectile(body) {
+      this.projectiles = this.projectiles.filter(b => b !== body);
+      this.bodies = this.bodies.filter(b => b !== body);
+      if (this.joint?.body === body) this.release();
+      this.cache.clear();
+    }
 
     prepareJoint(dt) {
       const j = this.joint;
@@ -212,7 +232,7 @@
 
     step(dt = STEP) {
       // Every body receives gravity on every substep, including at rest.
-      for (const b of this.blocks) {
+      for (const b of [...this.blocks, ...this.projectiles]) {
         b.vx += this.acceleration.x * dt;
         b.vy += (this.gravity + this.acceleration.y) * dt;
         const drag = 1 / (1 + 0.025 * dt);
@@ -270,7 +290,7 @@
           if (m.approachSpeed > 18 && m.contacts.some(p => p.normalImpulse > 0)) this.onImpact(m);
         }
       }
-      for (const b of this.blocks) {
+      for (const b of [...this.blocks, ...this.projectiles]) {
         b.x += b.vx * dt; b.y += b.vy * dt; b.angle += b.omega * dt; b.update();
       }
       // Separate position impulses correct penetration without injecting energy.
